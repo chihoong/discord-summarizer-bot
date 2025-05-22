@@ -34,6 +34,15 @@ class MessageSummarizer:
         # Combine messages into a single text
         combined_text = "\n".join(messages)
         
+        # Log message size for debugging
+        char_count = len(combined_text)
+        print(f"Preparing to send {char_count} characters to Claude API")
+        
+        # Truncate if too large (Claude has limits)
+        if char_count > 150000:  # Conservative limit
+            print(f"Message too large ({char_count} chars), truncating to last 150k characters")
+            combined_text = combined_text[-150000:]
+        
         # Use the custom prompt provided by the user
         full_prompt = f"""{custom_prompt}
 
@@ -42,6 +51,8 @@ Here are the Discord messages from #{channel_name}:
 {combined_text}"""
         
         try:
+            print("Sending request to Claude API...")
+            
             # Call Claude API (synchronous)
             response = self.client.messages.create(
                 model="claude-3-5-sonnet-20241022",
@@ -53,6 +64,8 @@ Here are the Discord messages from #{channel_name}:
                 }]
             )
             
+            print("Received response from Claude API")
+            
             summary = response.content[0].text
             
             # Add metadata header
@@ -61,10 +74,12 @@ Here are the Discord messages from #{channel_name}:
             header += f"📝 Custom prompt: {custom_prompt[:100]}{'...' if len(custom_prompt) > 100 else ''}\n"
             header += f"⏰ Generated at {datetime.now().strftime('%Y-%m-%d %H:%M UTC')}\n\n"
             
+            print(f"Successfully generated summary ({len(summary)} characters)")
             return header + summary
             
         except Exception as e:
             print(f"Error calling Claude API: {e}")
+            print(f"Error type: {type(e).__name__}")
             return f"❌ **Error generating AI summary**: {str(e)}\n\n" + \
                    self._create_simple_summary(messages, channel_name)
         """Summarize a list of messages using Claude"""
@@ -141,7 +156,7 @@ Please format your response clearly with appropriate sections."""
 # Initialize summarizer
 summarizer = MessageSummarizer(ANTHROPIC_API_KEY)
 
-async def fetch_messages_by_date_range(channel, start_date: str, end_date: str, limit: int = 500) -> List[str]:
+async def fetch_messages_by_date_range(channel, start_date: str, end_date: str, limit: int = 200) -> List[str]:
     """Fetch messages from a channel within a specific date range"""
     messages = []
     
@@ -150,14 +165,28 @@ async def fetch_messages_by_date_range(channel, start_date: str, end_date: str, 
         start_datetime = datetime.strptime(start_date, '%Y-%m-%d')
         end_datetime = datetime.strptime(end_date, '%Y-%m-%d') + timedelta(days=1)  # Include the entire end day
         
-        print(f"Fetching messages from {start_datetime} to {end_datetime}")
+        # Calculate days difference for safety check
+        days_diff = (end_datetime - start_datetime).days
+        if days_diff > 90:  # Limit to 90 days to prevent memory issues
+            print(f"Warning: Date range too large ({days_diff} days). Limiting to last 90 days.")
+            start_datetime = end_datetime - timedelta(days=90)
         
+        print(f"Fetching messages from {start_datetime} to {end_datetime} (max {limit} messages)")
+        
+        message_count = 0
         async for message in channel.history(limit=limit, after=start_datetime, before=end_datetime):
             if not message.author.bot:  # Skip bot messages
                 # Format: "Username (YYYY-MM-DD HH:MM): Message content"
                 timestamp = message.created_at.strftime('%Y-%m-%d %H:%M')
                 formatted_msg = f"{message.author.display_name} ({timestamp}): {message.content}"
                 messages.append(formatted_msg)
+                message_count += 1
+                
+                # Progress indicator for large fetches
+                if message_count % 50 == 0:
+                    print(f"Fetched {message_count} messages so far...")
+        
+        print(f"Successfully fetched {len(messages)} messages")
         
         # Reverse to get chronological order
         messages.reverse()
@@ -320,44 +349,76 @@ async def summarize_custom_command(ctx, channel_name: str, start_date: str, end_
     !summarize_custom general 2025-05-20 2025-05-22 Summarize the key decisions and action items from these messages
     !summarize_custom dev-team 2025-05-01 2025-05-15 Focus on technical discussions and any bugs mentioned
     """
-    # Find the channel
-    channel = discord.utils.get(ctx.guild.channels, name=channel_name)
-    
-    if not channel:
-        await ctx.send(f"❌ Channel '{channel_name}' not found.")
-        return
-    
-    if not isinstance(channel, discord.TextChannel):
-        await ctx.send(f"❌ '{channel_name}' is not a text channel.")
-        return
-    
-    # Validate date format
     try:
-        datetime.strptime(start_date, '%Y-%m-%d')
-        datetime.strptime(end_date, '%Y-%m-%d')
-    except ValueError:
-        await ctx.send("❌ Invalid date format. Please use YYYY-MM-DD format (e.g., 2025-05-22)")
-        return
-    
-    await ctx.send(f"📊 Fetching messages from #{channel_name} between {start_date} and {end_date}...")
-    
-    messages = await fetch_messages_by_date_range(channel, start_date, end_date)
-    
-    if not messages:
-        await ctx.send(f"No messages found in #{channel_name} for the specified date range.")
-        return
-    
-    await ctx.send(f"🤖 Claude is analyzing {len(messages)} messages with your custom prompt...")
-    
-    summary = await summarizer.summarize_messages_custom(messages, channel.name, summary_prompt)
-    
-    # Split long summaries if needed
-    if len(summary) > 2000:
-        chunks = [summary[i:i+2000] for i in range(0, len(summary), 2000)]
-        for chunk in chunks:
-            await ctx.send(chunk)
-    else:
-        await ctx.send(summary)
+        # Find the channel
+        channel = discord.utils.get(ctx.guild.channels, name=channel_name)
+        
+        if not channel:
+            await ctx.send(f"❌ Channel '{channel_name}' not found.")
+            return
+        
+        if not isinstance(channel, discord.TextChannel):
+            await ctx.send(f"❌ '{channel_name}' is not a text channel.")
+            return
+        
+        # Validate date format
+        try:
+            start_dt = datetime.strptime(start_date, '%Y-%m-%d')
+            end_dt = datetime.strptime(end_date, '%Y-%m-%d')
+            days_diff = (end_dt - start_dt).days
+            
+            if days_diff > 90:
+                await ctx.send(f"⚠️ Date range is {days_diff} days. For performance, limiting to last 90 days.")
+            elif days_diff < 0:
+                await ctx.send("❌ Start date must be before end date.")
+                return
+                
+        except ValueError:
+            await ctx.send("❌ Invalid date format. Please use YYYY-MM-DD format (e.g., 2025-05-22)")
+            return
+        
+        await ctx.send(f"📊 Fetching messages from #{channel_name} between {start_date} and {end_date}...")
+        await ctx.send("⏳ This may take a moment for large date ranges...")
+        
+        messages = await fetch_messages_by_date_range(channel, start_date, end_date, limit=200)
+        
+        if not messages:
+            await ctx.send(f"No messages found in #{channel_name} for the specified date range.")
+            return
+        
+        if len(messages) > 100:
+            await ctx.send(f"📈 Found {len(messages)} messages. This is a large dataset - Claude analysis may take 30-60 seconds...")
+        
+        await ctx.send(f"🤖 Claude is analyzing {len(messages)} messages with your custom prompt...")
+        
+        # Add timeout handling
+        try:
+            summary = await asyncio.wait_for(
+                summarizer.summarize_messages_custom(messages, channel.name, summary_prompt),
+                timeout=120  # 2 minute timeout
+            )
+            
+            # Split long summaries if needed
+            if len(summary) > 2000:
+                chunks = [summary[i:i+2000] for i in range(0, len(summary), 2000)]
+                for i, chunk in enumerate(chunks):
+                    if i == 0:
+                        await ctx.send(chunk)
+                    else:
+                        await ctx.send(f"**Continued ({i+1}/{len(chunks)}):**\n{chunk}")
+            else:
+                await ctx.send(summary)
+                
+            print(f"Successfully completed custom summary for {ctx.author}")
+            
+        except asyncio.TimeoutError:
+            await ctx.send("⏰ Analysis timed out. Try a smaller date range or fewer messages.")
+            print("Custom summary timed out")
+            
+    except Exception as e:
+        print(f"Error in summarize_custom_command: {e}")
+        await ctx.send(f"❌ An error occurred: {str(e)}")
+        await ctx.send("Try using a smaller date range or check the channel name.")
 
 # Main execution
 async def main():

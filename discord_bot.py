@@ -7,8 +7,9 @@ from typing import List
 import anthropic
 from anthropic import AsyncAnthropic
 
-# Create bot with all intents
-intents = discord.Intents.all()
+# Create bot with minimal required intents
+intents = discord.Intents.default()
+intents.message_content = True  # Required to read message content
 bot = commands.Bot(command_prefix='!', intents=intents)
 
 # Initialize Claude
@@ -18,7 +19,8 @@ class MessageSummarizer:
     def __init__(self, anthropic_api_key: str = None):
         """Initialize the summarizer with Anthropic Claude"""
         self.anthropic_api_key = anthropic_api_key
-        self.client = AsyncAnthropic(api_key=anthropic_api_key) if anthropic_api_key else None
+        # Use synchronous client only to avoid httpx compatibility issues
+        self.client = anthropic.Anthropic(api_key=anthropic_api_key) if anthropic_api_key else None
     
     async def summarize_messages(self, messages: List[str], channel_name: str, summary_style: str = "comprehensive") -> str:
         """Summarize a list of messages using Claude"""

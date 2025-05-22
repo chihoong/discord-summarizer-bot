@@ -22,7 +22,51 @@ class MessageSummarizer:
         # Use synchronous client only to avoid httpx compatibility issues
         self.client = anthropic.Anthropic(api_key=anthropic_api_key) if anthropic_api_key else None
     
-    async def summarize_messages(self, messages: List[str], channel_name: str, summary_style: str = "comprehensive") -> str:
+    async def summarize_messages_custom(self, messages: List[str], channel_name: str, custom_prompt: str) -> str:
+        """Summarize messages using a custom prompt"""
+        if not messages:
+            return "No messages to summarize."
+        
+        # If no API key, fall back to simple summary
+        if not self.client:
+            return self._create_simple_summary(messages, channel_name)
+        
+        # Combine messages into a single text
+        combined_text = "\n".join(messages)
+        
+        # Use the custom prompt provided by the user
+        full_prompt = f"""{custom_prompt}
+
+Here are the Discord messages from #{channel_name}:
+
+{combined_text}"""
+        
+        try:
+            # Call Claude API (synchronous)
+            response = self.client.messages.create(
+                model="claude-3-5-sonnet-20241022",
+                max_tokens=1500,  # Increased for custom summaries
+                temperature=0.3,
+                messages=[{
+                    "role": "user",
+                    "content": full_prompt
+                }]
+            )
+            
+            summary = response.content[0].text
+            
+            # Add metadata header
+            header = f"🤖 **Custom Claude Summary of #{channel_name}**\n"
+            header += f"📊 {len(messages)} messages analyzed\n"
+            header += f"📝 Custom prompt: {custom_prompt[:100]}{'...' if len(custom_prompt) > 100 else ''}\n"
+            header += f"⏰ Generated at {datetime.now().strftime('%Y-%m-%d %H:%M UTC')}\n\n"
+            
+            return header + summary
+            
+        except Exception as e:
+            print(f"Error calling Claude API: {e}")
+            return f"❌ **Error generating AI summary**: {str(e)}\n\n" + \
+                   self._create_simple_summary(messages, channel_name)
         """Summarize a list of messages using Claude"""
         if not messages:
             return "No messages to summarize."
@@ -97,7 +141,37 @@ Please format your response clearly with appropriate sections."""
 # Initialize summarizer
 summarizer = MessageSummarizer(ANTHROPIC_API_KEY)
 
-async def fetch_recent_messages(channel, hours: int = 24, limit: int = 100) -> List[str]:
+async def fetch_messages_by_date_range(channel, start_date: str, end_date: str, limit: int = 500) -> List[str]:
+    """Fetch messages from a channel within a specific date range"""
+    messages = []
+    
+    try:
+        # Parse date strings (expected format: YYYY-MM-DD)
+        start_datetime = datetime.strptime(start_date, '%Y-%m-%d')
+        end_datetime = datetime.strptime(end_date, '%Y-%m-%d') + timedelta(days=1)  # Include the entire end day
+        
+        print(f"Fetching messages from {start_datetime} to {end_datetime}")
+        
+        async for message in channel.history(limit=limit, after=start_datetime, before=end_datetime):
+            if not message.author.bot:  # Skip bot messages
+                # Format: "Username (YYYY-MM-DD HH:MM): Message content"
+                timestamp = message.created_at.strftime('%Y-%m-%d %H:%M')
+                formatted_msg = f"{message.author.display_name} ({timestamp}): {message.content}"
+                messages.append(formatted_msg)
+        
+        # Reverse to get chronological order
+        messages.reverse()
+        return messages
+        
+    except ValueError as e:
+        print(f"Date parsing error: {e}")
+        return []
+    except discord.Forbidden:
+        print(f"No permission to read messages in #{channel.name}")
+        return []
+    except Exception as e:
+        print(f"Error fetching messages: {e}")
+        return []
     """Fetch recent messages from a channel"""
     messages = []
     cutoff_time = datetime.utcnow() - timedelta(hours=hours)
@@ -181,14 +255,33 @@ async def help_command(ctx):
 `!ping` - Test if bot is working
 `!test` - Another test command
 `!help_summarizer` - Show this help message
+
+**Basic Summarization:**
 `!summarize [hours] [limit]` - Summarize recent messages in current channel
 `!summarize_channel <channel_name> [hours] [limit]` - Summarize messages from specific channel
 
+**Advanced Custom Summarization:**
+`!summarize_custom <channel_name> <start_date> <end_date> <custom_prompt>`
+• channel_name: Name of the Discord channel
+• start_date: Start date in YYYY-MM-DD format
+• end_date: End date in YYYY-MM-DD format  
+• custom_prompt: Your custom instructions for Claude
+
 **Examples:**
 • `!ping` - Test the bot
-• `!summarize` - Summarize last 24 hours
-• `!summarize 12 50` - Summarize last 12 hours, max 50 messages
-• `!summarize_channel general 6` - Summarize #general from last 6 hours
+• `!summarize` - Summarize last 24 hours of current channel
+• `!summarize_channel general 48` - Summarize #general from last 48 hours
+• `!summarize_custom general 2025-05-20 2025-05-22 Summarize the key decisions and action items`
+• `!summarize_custom dev-team 2025-05-01 2025-05-15 Focus on technical discussions and bugs mentioned`
+• `!summarize_custom project-updates 2025-05-10 2025-05-20 Create a timeline of project milestones`
+
+**Custom Prompt Ideas:**
+• "Focus on action items and decisions made"
+• "Summarize technical discussions and any bugs mentioned"  
+• "Create a timeline of important events"
+• "List all questions that were asked and their answers"
+• "Identify the main topics and who contributed to each"
+• "Extract key metrics, numbers, and data points mentioned"
 
 **Powered by Claude AI** 🧠
     """
@@ -217,31 +310,48 @@ async def summarize_command(ctx, hours: int = 24, limit: int = 100):
     else:
         await ctx.send(summary)
 
-@bot.command(name='summarize_channel')
-async def summarize_channel_command(ctx, channel_name: str, hours: int = 24, limit: int = 100):
-    """Summarize messages from a specific channel"""
+@bot.command(name='summarize_custom')
+async def summarize_custom_command(ctx, channel_name: str, start_date: str, end_date: str, *, summary_prompt: str):
+    """
+    Summarize messages from a specific channel with custom date range and prompt
+    Usage: !summarize_custom channel_name YYYY-MM-DD YYYY-MM-DD your custom prompt here
+    
+    Examples:
+    !summarize_custom general 2025-05-20 2025-05-22 Summarize the key decisions and action items from these messages
+    !summarize_custom dev-team 2025-05-01 2025-05-15 Focus on technical discussions and any bugs mentioned
+    """
+    # Find the channel
     channel = discord.utils.get(ctx.guild.channels, name=channel_name)
     
     if not channel:
-        await ctx.send(f"Channel '{channel_name}' not found.")
+        await ctx.send(f"❌ Channel '{channel_name}' not found.")
         return
     
     if not isinstance(channel, discord.TextChannel):
-        await ctx.send(f"'{channel_name}' is not a text channel.")
+        await ctx.send(f"❌ '{channel_name}' is not a text channel.")
         return
     
-    await ctx.send(f"📊 Fetching messages from #{channel_name} (last {hours} hours)...")
+    # Validate date format
+    try:
+        datetime.strptime(start_date, '%Y-%m-%d')
+        datetime.strptime(end_date, '%Y-%m-%d')
+    except ValueError:
+        await ctx.send("❌ Invalid date format. Please use YYYY-MM-DD format (e.g., 2025-05-22)")
+        return
     
-    messages = await fetch_recent_messages(channel, hours, limit)
+    await ctx.send(f"📊 Fetching messages from #{channel_name} between {start_date} and {end_date}...")
+    
+    messages = await fetch_messages_by_date_range(channel, start_date, end_date)
     
     if not messages:
-        await ctx.send(f"No messages found in #{channel_name} for the specified time period.")
+        await ctx.send(f"No messages found in #{channel_name} for the specified date range.")
         return
     
-    await ctx.send(f"🤖 Claude is analyzing {len(messages)} messages from #{channel_name}...")
+    await ctx.send(f"🤖 Claude is analyzing {len(messages)} messages with your custom prompt...")
     
-    summary = await summarizer.summarize_messages(messages, channel.name, "comprehensive")
+    summary = await summarizer.summarize_messages_custom(messages, channel.name, summary_prompt)
     
+    # Split long summaries if needed
     if len(summary) > 2000:
         chunks = [summary[i:i+2000] for i in range(0, len(summary), 2000)]
         for chunk in chunks:

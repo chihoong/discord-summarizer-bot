@@ -156,7 +156,7 @@ Please format your response clearly with appropriate sections."""
 # Initialize summarizer
 summarizer = MessageSummarizer(ANTHROPIC_API_KEY)
 
-async def fetch_messages_by_date_range(channel, start_date: str, end_date: str, limit: int = 200) -> List[str]:
+async def fetch_messages_by_date_range(channel, start_date: str, end_date: str, limit: int = 1000) -> List[str]:
     """Fetch messages from a channel within a specific date range"""
     messages = []
     
@@ -164,12 +164,6 @@ async def fetch_messages_by_date_range(channel, start_date: str, end_date: str, 
         # Parse date strings (expected format: YYYY-MM-DD)
         start_datetime = datetime.strptime(start_date, '%Y-%m-%d')
         end_datetime = datetime.strptime(end_date, '%Y-%m-%d') + timedelta(days=1)  # Include the entire end day
-        
-        # Calculate days difference for safety check
-        days_diff = (end_datetime - start_datetime).days
-        if days_diff > 90:  # Limit to 90 days to prevent memory issues
-            print(f"Warning: Date range too large ({days_diff} days). Limiting to last 90 days.")
-            start_datetime = end_datetime - timedelta(days=90)
         
         print(f"Fetching messages from {start_datetime} to {end_datetime} (max {limit} messages)")
         
@@ -183,7 +177,7 @@ async def fetch_messages_by_date_range(channel, start_date: str, end_date: str, 
                 message_count += 1
                 
                 # Progress indicator for large fetches
-                if message_count % 50 == 0:
+                if message_count % 100 == 0:
                     print(f"Fetched {message_count} messages so far...")
         
         print(f"Successfully fetched {len(messages)} messages")
@@ -367,9 +361,7 @@ async def summarize_custom_command(ctx, channel_name: str, start_date: str, end_
             end_dt = datetime.strptime(end_date, '%Y-%m-%d')
             days_diff = (end_dt - start_dt).days
             
-            if days_diff > 90:
-                await ctx.send(f"⚠️ Date range is {days_diff} days. For performance, limiting to last 90 days.")
-            elif days_diff < 0:
+            if days_diff < 0:
                 await ctx.send("❌ Start date must be before end date.")
                 return
                 
@@ -380,7 +372,7 @@ async def summarize_custom_command(ctx, channel_name: str, start_date: str, end_
         await ctx.send(f"📊 Fetching messages from #{channel_name} between {start_date} and {end_date}...")
         await ctx.send("⏳ This may take a moment for large date ranges...")
         
-        messages = await fetch_messages_by_date_range(channel, start_date, end_date, limit=200)
+        messages = await fetch_messages_by_date_range(channel, start_date, end_date, limit=1000)
         
         if not messages:
             await ctx.send(f"No messages found in #{channel_name} for the specified date range.")

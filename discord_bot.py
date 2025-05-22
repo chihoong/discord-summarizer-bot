@@ -3,12 +3,9 @@ from discord.ext import commands
 import asyncio
 from datetime import datetime, timedelta
 import os
-from typing import List, Optional
-import json
+from typing import List
 import anthropic
 from anthropic import AsyncAnthropic
-
-# You'll need to install: pip install discord.py anthropic
 
 class MessageSummarizer:
     def __init__(self, anthropic_api_key: str = None):
@@ -17,9 +14,7 @@ class MessageSummarizer:
         self.client = AsyncAnthropic(api_key=anthropic_api_key) if anthropic_api_key else None
     
     async def summarize_messages(self, messages: List[str], channel_name: str, summary_style: str = "comprehensive") -> str:
-        """
-        Summarize a list of messages using Claude
-        """
+        """Summarize a list of messages using Claude"""
         if not messages:
             return "No messages to summarize."
         
@@ -86,7 +81,7 @@ Messages:
         try:
             # Call Claude API
             response = await self.client.messages.create(
-                model="claude-3-5-sonnet-20241022",  # Latest Claude model
+                model="claude-3-5-sonnet-20241022",
                 max_tokens=1000,
                 temperature=0.3,
                 messages=[{
@@ -130,11 +125,14 @@ Messages:
 
 class DiscordSummarizerBot(commands.Bot):
     def __init__(self, anthropic_api_key: str = None):
-        intents = discord.Intents.default()
-        intents.message_content = True  # Required to read message content
+        intents = discord.Intents.all()
         super().__init__(command_prefix='!', intents=intents)
         
         self.summarizer = MessageSummarizer(anthropic_api_key)
+    
+    async def setup_hook(self):
+        """Called when the bot is starting up"""
+        print("Setting up bot...")
     
     async def on_ready(self):
         print(f'{self.user} has connected to Discord!')
@@ -146,17 +144,10 @@ class DiscordSummarizerBot(commands.Bot):
         print("Registered commands:")
         for command in self.commands:
             print(f"  - {command.name}")
-            
-        # Sync commands (try to register them)
-        try:
-            synced = await self.tree.sync()
-            print(f"Synced {len(synced)} slash commands")
-        except Exception as e:
-            print(f"Failed to sync commands: {e}")
     
     async def on_message(self, message):
         # Debug: Print all messages the bot sees
-        if message.author != self.user:  # Don't respond to self
+        if message.author != self.user:
             print(f"Received message: '{message.content}' from {message.author}")
             
             # Check if it's a command
@@ -200,13 +191,55 @@ class DiscordSummarizerBot(commands.Bot):
             print(f"Error fetching messages: {e}")
             return []
     
-    @commands.command(name='summarize')
-    async def summarize_channel(self, ctx, hours: int = 24, limit: int = 100, style: str = "comprehensive"):
+    @commands.command()
+    async def ping(self, ctx):
+        """Simple test command"""
+        await ctx.send("🏓 Pong! Bot is working!")
+        print(f"Ping command executed by {ctx.author}")
+    
+    @commands.command()
+    async def test(self, ctx):
+        """Another test command"""
+        await ctx.send("✅ Test command working!")
+        print(f"Test command executed by {ctx.author}")
+    
+    @commands.command()
+    async def help_summarizer(self, ctx):
+        """Show available commands"""
+        help_text = """
+🤖 **Discord Summarizer Bot with Claude AI**
+
+**Commands:**
+
+`!summarize [hours] [limit] [style]` - Summarize recent messages in current channel
+• hours: How many hours back to look (default: 24)
+• limit: Maximum messages to fetch (default: 100)
+• style: Summary style (default: comprehensive)
+
+`!summarize_channel <channel_name> [hours] [limit] [style]` - Summarize messages from specific channel
+
+`!help_summarizer` - Show this help message
+`!ping` - Test if bot is working
+`!test` - Another test command
+
+**Summary Styles:**
+• `comprehensive` - Detailed analysis with topics, decisions, and sentiment
+• `brief` - Concise overview under 200 words
+• `bullet` - Organized bullet point format
+• `participants` - Focus on who said what and conversation dynamics
+
+**Examples:**
+• `!summarize` - Comprehensive summary of last 24 hours
+• `!summarize 12 50 brief` - Brief summary of last 12 hours, max 50 messages
+• `!summarize_channel general 6 100 bullet` - Bullet point summary of #general from last 6 hours
+
+**Powered by Claude AI** 🧠
         """
-        Summarize recent messages in the current channel
-        Usage: !summarize [hours] [limit] [style]
-        Styles: comprehensive, brief, bullet, participants
-        """
+        await ctx.send(help_text)
+    
+    @commands.command()
+    async def summarize(self, ctx, hours: int = 24, limit: int = 100, style: str = "comprehensive"):
+        """Summarize recent messages in the current channel"""
         if style not in ["comprehensive", "brief", "bullet", "participants"]:
             await ctx.send("❌ Invalid style. Choose from: comprehensive, brief, bullet, participants")
             return
@@ -231,13 +264,9 @@ class DiscordSummarizerBot(commands.Bot):
         else:
             await ctx.send(summary)
     
-    @commands.command(name='summarize_channel')
-    async def summarize_specific_channel(self, ctx, channel_name: str, hours: int = 24, limit: int = 100, style: str = "comprehensive"):
-        """
-        Summarize messages from a specific channel
-        Usage: !summarize_channel channel_name [hours] [limit] [style]
-        Styles: comprehensive, brief, bullet, participants
-        """
+    @commands.command()
+    async def summarize_channel(self, ctx, channel_name: str, hours: int = 24, limit: int = 100, style: str = "comprehensive"):
+        """Summarize messages from a specific channel"""
         if style not in ["comprehensive", "brief", "bullet", "participants"]:
             await ctx.send("❌ Invalid style. Choose from: comprehensive, brief, bullet, participants")
             return
@@ -270,49 +299,15 @@ class DiscordSummarizerBot(commands.Bot):
                 await ctx.send(chunk)
         else:
             await ctx.send(summary)
-    
-    @commands.command(name='help_summarizer')
-    async def help_command(self, ctx):
-        """Show available commands"""
-        help_text = """
-🤖 **Discord Summarizer Bot with Claude AI**
-
-**Commands:**
-
-`!summarize [hours] [limit] [style]` - Summarize recent messages in current channel
-• hours: How many hours back to look (default: 24)
-• limit: Maximum messages to fetch (default: 100)
-• style: Summary style (default: comprehensive)
-
-`!summarize_channel <channel_name> [hours] [limit] [style]` - Summarize messages from specific channel
-
-`!help_summarizer` - Show this help message
-
-**Summary Styles:**
-• `comprehensive` - Detailed analysis with topics, decisions, and sentiment
-• `brief` - Concise overview under 200 words
-• `bullet` - Organized bullet point format
-• `participants` - Focus on who said what and conversation dynamics
-
-**Examples:**
-• `!summarize` - Comprehensive summary of last 24 hours
-• `!summarize 12 50 brief` - Brief summary of last 12 hours, max 50 messages
-• `!summarize_channel general 6 100 bullet` - Bullet point summary of #general from last 6 hours
-• `!summarize 24 100 participants` - Analyze participant activity from last 24 hours
-
-**Powered by Claude AI** 🧠
-        """
-        await ctx.send(help_text)
 
 # Main execution
 async def main():
     # Configuration
-    DISCORD_TOKEN = os.getenv('DISCORD_BOT_TOKEN')  # Set this environment variable
-    ANTHROPIC_API_KEY = os.getenv('ANTHROPIC_API_KEY')  # Set this for Claude AI summaries
+    DISCORD_TOKEN = os.getenv('DISCORD_BOT_TOKEN')
+    ANTHROPIC_API_KEY = os.getenv('ANTHROPIC_API_KEY')
     
     if not DISCORD_TOKEN:
         print("Error: DISCORD_BOT_TOKEN environment variable not set")
-        print("Please set your Discord bot token as an environment variable")
         return
     
     if not ANTHROPIC_API_KEY:
@@ -330,5 +325,4 @@ async def main():
         print(f"Error running bot: {e}")
 
 if __name__ == "__main__":
-    # Run the bot
     asyncio.run(main())

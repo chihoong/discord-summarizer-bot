@@ -139,6 +139,16 @@ class DiscordSummarizerBot(commands.Bot):
     async def on_ready(self):
         print(f'{self.user} has connected to Discord!')
         print(f'Bot is in {len(self.guilds)} guilds')
+        print(f'Bot ID: {self.user.id}')
+        print(f'Message Content Intent: {self.intents.message_content}')
+    
+    async def on_message(self, message):
+        # Debug: Print all messages the bot sees
+        if message.author != self.user:  # Don't respond to self
+            print(f"Received message: '{message.content}' from {message.author}")
+        
+        # Process commands
+        await self.process_commands(message)
     
     async def fetch_recent_messages(self, channel, hours: int = 24, limit: int = 100) -> List[str]:
         """Fetch recent messages from a channel"""

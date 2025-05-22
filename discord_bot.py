@@ -7,6 +7,13 @@ from typing import List
 import anthropic
 from anthropic import AsyncAnthropic
 
+# Create bot with all intents
+intents = discord.Intents.all()
+bot = commands.Bot(command_prefix='!', intents=intents)
+
+# Initialize Claude
+ANTHROPIC_API_KEY = os.getenv('ANTHROPIC_API_KEY')
+
 class MessageSummarizer:
     def __init__(self, anthropic_api_key: str = None):
         """Initialize the summarizer with Anthropic Claude"""
@@ -26,8 +33,7 @@ class MessageSummarizer:
         combined_text = "\n".join(messages)
         
         # Create appropriate prompt based on summary style
-        prompts = {
-            "comprehensive": f"""Please provide a comprehensive summary of these Discord messages from #{channel_name}. 
+        prompt = f"""Please provide a comprehensive summary of these Discord messages from #{channel_name}. 
 
 Include:
 - Main topics discussed
@@ -39,44 +45,7 @@ Include:
 Messages:
 {combined_text}
 
-Please format your response clearly with appropriate sections.""",
-            
-            "brief": f"""Please provide a brief, concise summary of these Discord messages from #{channel_name}.
-
-Focus on:
-- Main topics (1-2 sentences each)
-- Key takeaways
-- Important decisions or announcements
-
-Keep it under 200 words.
-
-Messages:
-{combined_text}""",
-            
-            "bullet": f"""Please summarize these Discord messages from #{channel_name} in bullet point format.
-
-Create organized bullet points covering:
-- Main topics discussed
-- Key decisions or outcomes
-- Important announcements
-- Notable questions/issues raised
-
-Messages:
-{combined_text}""",
-            
-            "participants": f"""Please analyze these Discord messages from #{channel_name} with focus on participant activity and engagement.
-
-Include:
-- Who were the main contributors
-- What topics each person focused on
-- Overall conversation dynamics
-- Key interactions between participants
-
-Messages:
-{combined_text}"""
-        }
-        
-        prompt = prompts.get(summary_style, prompts["comprehensive"])
+Please format your response clearly with appropriate sections."""
         
         try:
             # Call Claude API
@@ -94,7 +63,7 @@ Messages:
             
             # Add metadata header
             header = f"🤖 **Claude Summary of #{channel_name}**\n"
-            header += f"📊 {len(messages)} messages analyzed • Style: {summary_style.title()}\n"
+            header += f"📊 {len(messages)} messages analyzed\n"
             header += f"⏰ Generated at {datetime.now().strftime('%Y-%m-%d %H:%M UTC')}\n\n"
             
             return header + summary
@@ -123,188 +92,165 @@ Messages:
                f"💬 **Activity Level**: {len(messages)} messages exchanged\n\n" + \
                "⚠️ *Detailed AI summary unavailable - Claude API key not configured*"
 
-class DiscordSummarizerBot(commands.Bot):
-    def __init__(self, anthropic_api_key: str = None):
-        intents = discord.Intents.all()
-        super().__init__(command_prefix='!', intents=intents)
+# Initialize summarizer
+summarizer = MessageSummarizer(ANTHROPIC_API_KEY)
+
+async def fetch_recent_messages(channel, hours: int = 24, limit: int = 100) -> List[str]:
+    """Fetch recent messages from a channel"""
+    messages = []
+    cutoff_time = datetime.utcnow() - timedelta(hours=hours)
+    
+    try:
+        async for message in channel.history(limit=limit, after=cutoff_time):
+            if not message.author.bot:  # Skip bot messages
+                # Format: "Username: Message content"
+                formatted_msg = f"{message.author.display_name}: {message.content}"
+                messages.append(formatted_msg)
         
-        self.summarizer = MessageSummarizer(anthropic_api_key)
-    
-    async def setup_hook(self):
-        """Called when the bot is starting up"""
-        print("Setting up bot...")
-    
-    async def on_ready(self):
-        print(f'{self.user} has connected to Discord!')
-        print(f'Bot is in {len(self.guilds)} guilds')
-        print(f'Bot ID: {self.user.id}')
-        print(f'Message Content Intent: {self.intents.message_content}')
+        # Reverse to get chronological order
+        messages.reverse()
+        return messages
         
-        # Debug: Print registered commands
-        print("Registered commands:")
-        for command in self.commands:
-            print(f"  - {command.name}")
+    except discord.Forbidden:
+        print(f"No permission to read messages in #{channel.name}")
+        return []
+    except Exception as e:
+        print(f"Error fetching messages: {e}")
+        return []
+
+@bot.event
+async def on_ready():
+    print(f'{bot.user} has connected to Discord!')
+    print(f'Bot is in {len(bot.guilds)} guilds')
+    print(f'Bot ID: {bot.user.id}')
+    print(f'Message Content Intent: {bot.intents.message_content}')
     
-    async def on_message(self, message):
-        # Debug: Print all messages the bot sees
-        if message.author != self.user:
-            print(f"Received message: '{message.content}' from {message.author}")
-            
-            # Check if it's a command
-            if message.content.startswith('!'):
-                print(f"Processing potential command: {message.content}")
+    # Debug: Print registered commands
+    print("Registered commands:")
+    for command in bot.commands:
+        print(f"  - {command.name}")
+
+@bot.event
+async def on_message(message):
+    # Debug: Print all messages the bot sees
+    if message.author != bot.user:
+        print(f"Received message: '{message.content}' from {message.author}")
         
-        # Process commands
-        await self.process_commands(message)
+        # Check if it's a command
+        if message.content.startswith('!'):
+            print(f"Processing potential command: {message.content}")
     
-    async def on_command_error(self, ctx, error):
-        """Handle command errors"""
-        print(f"Command error: {error}")
-        print(f"Command: {ctx.command}")
-        print(f"Message: {ctx.message.content}")
-        await ctx.send(f"❌ Error: {error}")
-    
-    async def on_command(self, ctx):
-        """Called when a command is successfully invoked"""
-        print(f"Command invoked: {ctx.command} by {ctx.author}")
-    
-    async def fetch_recent_messages(self, channel, hours: int = 24, limit: int = 100) -> List[str]:
-        """Fetch recent messages from a channel"""
-        messages = []
-        cutoff_time = datetime.utcnow() - timedelta(hours=hours)
-        
-        try:
-            async for message in channel.history(limit=limit, after=cutoff_time):
-                if not message.author.bot:  # Skip bot messages
-                    # Format: "Username: Message content"
-                    formatted_msg = f"{message.author.display_name}: {message.content}"
-                    messages.append(formatted_msg)
-            
-            # Reverse to get chronological order
-            messages.reverse()
-            return messages
-            
-        except discord.Forbidden:
-            print(f"No permission to read messages in #{channel.name}")
-            return []
-        except Exception as e:
-            print(f"Error fetching messages: {e}")
-            return []
-    
-    @commands.command()
-    async def ping(self, ctx):
-        """Simple test command"""
-        await ctx.send("🏓 Pong! Bot is working!")
-        print(f"Ping command executed by {ctx.author}")
-    
-    @commands.command()
-    async def test(self, ctx):
-        """Another test command"""
-        await ctx.send("✅ Test command working!")
-        print(f"Test command executed by {ctx.author}")
-    
-    @commands.command()
-    async def help_summarizer(self, ctx):
-        """Show available commands"""
-        help_text = """
+    # Process commands
+    await bot.process_commands(message)
+
+@bot.event
+async def on_command_error(ctx, error):
+    """Handle command errors"""
+    print(f"Command error: {error}")
+    print(f"Command: {ctx.command}")
+    print(f"Message: {ctx.message.content}")
+    await ctx.send(f"❌ Error: {error}")
+
+@bot.event
+async def on_command(ctx):
+    """Called when a command is successfully invoked"""
+    print(f"Command invoked: {ctx.command} by {ctx.author}")
+
+@bot.command(name='ping')
+async def ping_command(ctx):
+    """Simple test command"""
+    await ctx.send("🏓 Pong! Bot is working!")
+    print(f"Ping command executed by {ctx.author}")
+
+@bot.command(name='test')
+async def test_command(ctx):
+    """Another test command"""
+    await ctx.send("✅ Test command working!")
+    print(f"Test command executed by {ctx.author}")
+
+@bot.command(name='help_summarizer')
+async def help_command(ctx):
+    """Show available commands"""
+    help_text = """
 🤖 **Discord Summarizer Bot with Claude AI**
 
 **Commands:**
 
-`!summarize [hours] [limit] [style]` - Summarize recent messages in current channel
-• hours: How many hours back to look (default: 24)
-• limit: Maximum messages to fetch (default: 100)
-• style: Summary style (default: comprehensive)
-
-`!summarize_channel <channel_name> [hours] [limit] [style]` - Summarize messages from specific channel
-
-`!help_summarizer` - Show this help message
 `!ping` - Test if bot is working
 `!test` - Another test command
-
-**Summary Styles:**
-• `comprehensive` - Detailed analysis with topics, decisions, and sentiment
-• `brief` - Concise overview under 200 words
-• `bullet` - Organized bullet point format
-• `participants` - Focus on who said what and conversation dynamics
+`!help_summarizer` - Show this help message
+`!summarize [hours] [limit]` - Summarize recent messages in current channel
+`!summarize_channel <channel_name> [hours] [limit]` - Summarize messages from specific channel
 
 **Examples:**
-• `!summarize` - Comprehensive summary of last 24 hours
-• `!summarize 12 50 brief` - Brief summary of last 12 hours, max 50 messages
-• `!summarize_channel general 6 100 bullet` - Bullet point summary of #general from last 6 hours
+• `!ping` - Test the bot
+• `!summarize` - Summarize last 24 hours
+• `!summarize 12 50` - Summarize last 12 hours, max 50 messages
+• `!summarize_channel general 6` - Summarize #general from last 6 hours
 
 **Powered by Claude AI** 🧠
-        """
-        await ctx.send(help_text)
+    """
+    await ctx.send(help_text)
+
+@bot.command(name='summarize')
+async def summarize_command(ctx, hours: int = 24, limit: int = 100):
+    """Summarize recent messages in the current channel"""
+    await ctx.send(f"📊 Fetching messages from the last {hours} hours...")
     
-    @commands.command()
-    async def summarize(self, ctx, hours: int = 24, limit: int = 100, style: str = "comprehensive"):
-        """Summarize recent messages in the current channel"""
-        if style not in ["comprehensive", "brief", "bullet", "participants"]:
-            await ctx.send("❌ Invalid style. Choose from: comprehensive, brief, bullet, participants")
-            return
-            
-        await ctx.send(f"📊 Fetching messages from the last {hours} hours...")
-        
-        messages = await self.fetch_recent_messages(ctx.channel, hours, limit)
-        
-        if not messages:
-            await ctx.send("No messages found in the specified time period.")
-            return
-        
-        await ctx.send(f"🤖 Claude is analyzing {len(messages)} messages...")
-        
-        summary = await self.summarizer.summarize_messages(messages, ctx.channel.name, style)
-        
-        # Split long summaries if needed
-        if len(summary) > 2000:
-            chunks = [summary[i:i+2000] for i in range(0, len(summary), 2000)]
-            for chunk in chunks:
-                await ctx.send(chunk)
-        else:
-            await ctx.send(summary)
+    messages = await fetch_recent_messages(ctx.channel, hours, limit)
     
-    @commands.command()
-    async def summarize_channel(self, ctx, channel_name: str, hours: int = 24, limit: int = 100, style: str = "comprehensive"):
-        """Summarize messages from a specific channel"""
-        if style not in ["comprehensive", "brief", "bullet", "participants"]:
-            await ctx.send("❌ Invalid style. Choose from: comprehensive, brief, bullet, participants")
-            return
-            
-        channel = discord.utils.get(ctx.guild.channels, name=channel_name)
-        
-        if not channel:
-            await ctx.send(f"Channel '{channel_name}' not found.")
-            return
-        
-        if not isinstance(channel, discord.TextChannel):
-            await ctx.send(f"'{channel_name}' is not a text channel.")
-            return
-        
-        await ctx.send(f"📊 Fetching messages from #{channel_name} (last {hours} hours)...")
-        
-        messages = await self.fetch_recent_messages(channel, hours, limit)
-        
-        if not messages:
-            await ctx.send(f"No messages found in #{channel_name} for the specified time period.")
-            return
-        
-        await ctx.send(f"🤖 Claude is analyzing {len(messages)} messages from #{channel_name}...")
-        
-        summary = await self.summarizer.summarize_messages(messages, channel.name, style)
-        
-        if len(summary) > 2000:
-            chunks = [summary[i:i+2000] for i in range(0, len(summary), 2000)]
-            for chunk in chunks:
-                await ctx.send(chunk)
-        else:
-            await ctx.send(summary)
+    if not messages:
+        await ctx.send("No messages found in the specified time period.")
+        return
+    
+    await ctx.send(f"🤖 Claude is analyzing {len(messages)} messages...")
+    
+    summary = await summarizer.summarize_messages(messages, ctx.channel.name, "comprehensive")
+    
+    # Split long summaries if needed
+    if len(summary) > 2000:
+        chunks = [summary[i:i+2000] for i in range(0, len(summary), 2000)]
+        for chunk in chunks:
+            await ctx.send(chunk)
+    else:
+        await ctx.send(summary)
+
+@bot.command(name='summarize_channel')
+async def summarize_channel_command(ctx, channel_name: str, hours: int = 24, limit: int = 100):
+    """Summarize messages from a specific channel"""
+    channel = discord.utils.get(ctx.guild.channels, name=channel_name)
+    
+    if not channel:
+        await ctx.send(f"Channel '{channel_name}' not found.")
+        return
+    
+    if not isinstance(channel, discord.TextChannel):
+        await ctx.send(f"'{channel_name}' is not a text channel.")
+        return
+    
+    await ctx.send(f"📊 Fetching messages from #{channel_name} (last {hours} hours)...")
+    
+    messages = await fetch_recent_messages(channel, hours, limit)
+    
+    if not messages:
+        await ctx.send(f"No messages found in #{channel_name} for the specified time period.")
+        return
+    
+    await ctx.send(f"🤖 Claude is analyzing {len(messages)} messages from #{channel_name}...")
+    
+    summary = await summarizer.summarize_messages(messages, channel.name, "comprehensive")
+    
+    if len(summary) > 2000:
+        chunks = [summary[i:i+2000] for i in range(0, len(summary), 2000)]
+        for chunk in chunks:
+            await ctx.send(chunk)
+    else:
+        await ctx.send(summary)
 
 # Main execution
 async def main():
     # Configuration
     DISCORD_TOKEN = os.getenv('DISCORD_BOT_TOKEN')
-    ANTHROPIC_API_KEY = os.getenv('ANTHROPIC_API_KEY')
     
     if not DISCORD_TOKEN:
         print("Error: DISCORD_BOT_TOKEN environment variable not set")
@@ -314,9 +260,7 @@ async def main():
         print("Warning: ANTHROPIC_API_KEY environment variable not set")
         print("Bot will run but summaries will be basic without Claude AI")
     
-    # Create and run the bot
-    bot = DiscordSummarizerBot(ANTHROPIC_API_KEY)
-    
+    # Run the bot
     try:
         await bot.start(DISCORD_TOKEN)
     except discord.LoginFailure:

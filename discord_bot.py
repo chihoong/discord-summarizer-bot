@@ -146,9 +146,24 @@ class DiscordSummarizerBot(commands.Bot):
         # Debug: Print all messages the bot sees
         if message.author != self.user:  # Don't respond to self
             print(f"Received message: '{message.content}' from {message.author}")
+            
+            # Check if it's a command
+            if message.content.startswith('!'):
+                print(f"Processing potential command: {message.content}")
         
         # Process commands
         await self.process_commands(message)
+    
+    async def on_command_error(self, ctx, error):
+        """Handle command errors"""
+        print(f"Command error: {error}")
+        print(f"Command: {ctx.command}")
+        print(f"Message: {ctx.message.content}")
+        await ctx.send(f"❌ Error: {error}")
+    
+    async def on_command(self, ctx):
+        """Called when a command is successfully invoked"""
+        print(f"Command invoked: {ctx.command} by {ctx.author}")
     
     async def fetch_recent_messages(self, channel, hours: int = 24, limit: int = 100) -> List[str]:
         """Fetch recent messages from a channel"""

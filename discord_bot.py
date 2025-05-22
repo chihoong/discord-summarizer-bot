@@ -141,6 +141,18 @@ class DiscordSummarizerBot(commands.Bot):
         print(f'Bot is in {len(self.guilds)} guilds')
         print(f'Bot ID: {self.user.id}')
         print(f'Message Content Intent: {self.intents.message_content}')
+        
+        # Debug: Print registered commands
+        print("Registered commands:")
+        for command in self.commands:
+            print(f"  - {command.name}")
+            
+        # Sync commands (try to register them)
+        try:
+            synced = await self.tree.sync()
+            print(f"Synced {len(synced)} slash commands")
+        except Exception as e:
+            print(f"Failed to sync commands: {e}")
     
     async def on_message(self, message):
         # Debug: Print all messages the bot sees
